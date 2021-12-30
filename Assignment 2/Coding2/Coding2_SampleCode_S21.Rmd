@@ -1,0 +1,225 @@
+---
+title: "PSL (S21) Coding Assignment 2"
+date: "02/05/2021"
+output:
+  html_document:
+    toc: yes
+    toc_depth: '2'
+    df_print: paged
+  html_notebook:
+    theme: readable
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+---
+
+## Load Data
+
+You can ignore the code snippet below and start your code with loading "Coding2_myData.csv"
+
+```{r eval=FALSE}
+library(MASS)
+myData = Boston
+names(myData)[14] = "Y"
+iLog = c(1, 3, 5, 6, 8, 9, 10, 14);
+myData[, iLog] = log(myData[, iLog]);
+myData[, 2] = myData[, 2] / 10;
+myData[, 7] = myData[, 7]^2.5 / 10^4
+myData[, 11] = exp(0.4 * myData[, 11]) / 1000;
+myData[, 12] = myData[, 12] / 100;
+myData[, 13] = sqrt(myData[, 13]);
+write.csv(myData, file = "Coding2_myData.csv", 
+          row.names = FALSE)
+
+# After preparing the dataset, remove all objects and the attached MASS library
+rm(list=objects())  
+detach("package:MASS")
+```
+
+
+**You can start here.**
+
+```{r}
+myData = read.csv("Coding2_myData.csv")
+X = as.matrix(myData[, -14])
+y = myData$Y
+dim(X)
+```
+
+## CD for Lasso 
+
+Implement the Coordinate Descent algorithm for Lasso. Some part of the function `MyLasso` is blocked here, but your submission should include all code used to produce your results. 
+
+```{r}
+one_var_lasso = function(r, x, lam) {
+    xx = sum(x^2)
+    xr = sum(r * x)
+    b = (abs(xr) - lam/2)/xx
+    b = sign(xr) * ifelse(b > 0, b, 0)
+    return(b)
+}
+```
+
+```{r}
+glmnet_sd = function (z, n) {
+    sd(z) * sqrt((n-1)/n)
+}
+
+MyLasso = function(X, y, lam.seq, maxit = 500) {
+    
+    # X: n-by-p design matrix without the intercept 
+    # y: n-by-1 response vector 
+    # lam.seq: sequence of lambda values 
+    # maxit: number of updates for each lambda 
+    # Center/Scale X
+    # Center y
+  
+    n = length(y)
+    p = dim(X)[2]
+    nlam = length(lam.seq)
+  
+    ##############################
+    # YOUR CODE: 
+    # Record the corresponding means and scales
+    # For example, 
+    # y.mean = mean(y)
+    # Xs = centered and scaled X
+    ##############################
+    
+    # Center y
+    y.mean = mean(y)
+    
+    # Center/Scale X
+    x.column.means = colMeans(X)
+    x.column.sd_vals = apply(X, 2, glmnet_sd, n)
+
+    Xc = t(t(X) - x.column.means)
+    Xs = t(t(Xc) / x.column.sd_vals)
+
+    # Initilize coef vector b and residual vector r
+    b = rep(0, p)
+    r = y
+    B = matrix(nrow = nlam, ncol = p + 1)
+    
+    # Triple nested loop
+    for (m in 1:nlam) {
+        lam = 2 * n * lam.seq[m]
+        for (step in 1:maxit) {
+            for (j in 1:p) {
+                r = r + (Xs[, j] * b[j])
+                b[j] = one_var_lasso(r, Xs[, j], lam)
+                r = r - Xs[, j] * b[j]
+            }
+        }
+        B[m, ] = c(0, b)
+    }
+   
+    ##############################
+    # YOUR CODE:
+    # Scale back the coefficients;
+    # Update the intercepts stored in B[, 1]
+    ##############################
+
+    x.col_vals = x.column.means / x.column.sd_vals
+
+    # Update the intercepts stored in B[, 1]
+    B[, 1] = y.mean - B[,-1] %*% x.col_vals
+
+    # Scale back the coefficients;
+    B[, -1] = t(t(B[, -1]) / x.column.sd_vals)
+
+    t(B)
+}
+
+```
+
+
+## Some Technical Details
+
+* We use the following function to solve the Lasso estimate for $\beta_j$ given other coefficients fixed; see the derivation in Coding2.pdf. 
+
+```{r}
+one_var_lasso = function(r, x, lam) {
+    xx = sum(x^2)
+    xr = sum(r * x)
+    b = (abs(xr) - lam/2)/xx
+    b = sign(xr) * ifelse(b > 0, b, 0)
+    return(b)
+}
+```
+
+* `glmnet` standardizes the data using a different definition of "standard deviation", which is divided by <b>n</b>, while the command `sd(z)` in R divides the sum of squares by <b>(n-1)</b> where z is a n-by-1 data vector. We suggest to use `sd(z) * sqrt((n-1)/n)` to compute the standard deviation of a data vector used in `myLasso`, since
+$$
+\sqrt{\frac{\sum_i (z_i - \text{z.mean})^2}{n}} = \sqrt{\frac{\sum_i (z_i - \text{z.mean})^2}{n-1}} \cdot \sqrt{\frac{n-1}{n}} = \text{sd(z)} \cdot \sqrt{\frac{n-1}{n}}.
+$$
+
+
+* Why we need to scale the lambda value by (2n) in `lam = 2*n*lam.seq[m]`? As detailed in Coding2.pdf, the `one_var_lasso` function is derived based on objective function
+$$\text{RSS} + \lambda \cdot | \beta|, $$
+while the objective function used in `glmnet` is
+$$
+\frac{1}{2n} \text{RSS} + \lambda | \beta| \ \propto \ \text{RSS} + 2 n \lambda | \cdot \beta| 
+$$
+So to compare results from the two algorithms on an equal footing, we need to scale our lambda value by (2n). 
+
+
+
+## Test Your Code
+
+Test your code with the following lambda sequence. The 80 sets of coefficients (including the intercept) are stored in a 14-by-80 matrix `myout`. 
+
+```{r}
+lam.seq = exp(seq(-1, -8, length.out = 80))
+myout = MyLasso(X, y, lam.seq, maxit = 100) 
+rownames(myout) = c("Intercept", colnames(X)) 
+dim(myout)
+```
+
+Produce the path plot for the 13 non-intercept coefficients with the x-coordinate to be the lambda values in log-scale. 
+
+```{r}
+x.index = log(lam.seq)
+beta = myout[-1, ]  # beta is a 13-by-80 matrix
+matplot(x.index, t(beta),
+        xlim = c(min(x.index), max(x.index)),
+        lty = 1,
+        xlab = "Log Lambda",
+        ylab = "Coefficients",
+        type="l", 
+        lwd = 1)
+
+# You can add variable names to each path
+var.names = colnames(X)
+nvar = length(var.names)
+xpos = rep(min(x.index), nvar)
+ypos = beta[, ncol(beta)]
+text(xpos, ypos, var.names, cex=0.5, pos=2)
+```
+
+
+## Check the Accuracy 
+
+Compare  the accuracy of your algorithm against the output from `glmnet`. The maximum difference between the two coefficient matrices should be <font color="red">less than 0.005</font>.
+
+```{r}
+library(glmnet)
+lasso.fit = glmnet(X, y, alpha = 1, lambda = lam.seq)
+# coef(lasso.fit)
+write.csv(as.matrix(coef(lasso.fit)), file = "Coding2_lasso_coefs.csv", 
+          row.names = FALSE)
+```
+
+```{r}
+max(abs(coef(lasso.fit) - myout))
+```
+
+Your plot should look the plot from `glmnet`
+
+```{r}
+plot(lasso.fit, xvar = "lambda")
+var.names = colnames(X)
+nvar = length(var.names)
+xpos = rep(min(x.index), nvar)
+ypos = beta[, ncol(beta)]
+text(xpos, ypos, var.names, cex=0.5, pos=2)
+```

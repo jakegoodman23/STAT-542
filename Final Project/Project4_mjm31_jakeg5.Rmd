@@ -1,0 +1,466 @@
+---
+title: "Movie Recommendation"
+author: 'Jake Goodman (Net ID: jakeg5) & Michael McClanahan (Net ID: mjm31)'
+date: "Fall 2021"
+output:
+  html_document:
+    toc: yes
+    df_print: paged
+  html_notebook:
+    theme: readable
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, echo = FALSE, message = FALSE, warning = FALSE}
+options(scipen = 1, digits = 4, width = 80)
+library(knitr)
+opts_chunk$set(cache = TRUE, autodep = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(recommenderlab)
+library(DT)
+library(data.table)
+library(reshape2)
+library(sqldf)
+library(tibble)
+library(knitr)
+library(kableExtra)
+#devtools::install_github("haozhu233/kableExtra")
+```
+# Team Members and Contributions
+The team for this project consisted of two members: Jake Goodman (Net ID: jakeg5) and Michael McClanahan (Net ID: mjm31). Each member contributed equally to the project. Michael got the application set up, developed System I, and integrated that system in the application. Jake developed System II and integrated that system in the application.
+
+# Download and Read in Data
+
+URL for downloading the necessary data sets:
+```{r}
+myurl = "https://liangfgithub.github.io/MovieData/"
+```
+
+### Ratings data
+
+Download and read in `ratings.dat`. Store the ratings as a tibble:
+```{r message=FALSE, warning=FALSE}
+# use colClasses = 'NULL' to skip columns
+ratings = read.csv(paste0(myurl, 'ratings.dat?raw=true'), 
+                   sep = ':',
+                   colClasses = c('integer', 'NULL'), 
+                   header = FALSE)
+colnames(ratings) = c('UserID', 'MovieID', 'Rating', 'Timestamp')
+ratings = as_tibble(ratings)
+print(ratings)
+```
+
+### Movies data
+
+Download and read in `movies.dat`. Store the movies as a tibble.
+```{r}
+movies = readLines(paste0(myurl, 'movies.dat?raw=true'))
+movies = strsplit(movies, split = "::", fixed = TRUE, useBytes = TRUE)
+movies = matrix(unlist(movies), ncol = 3, byrow = TRUE)
+movies = data.frame(movies, stringsAsFactors = FALSE)
+colnames(movies) = c('MovieID', 'Title', 'Genres')
+movies$MovieID = as.integer(movies$MovieID)
+
+# convert accented characters
+movies$Title = iconv(movies$Title, "latin1", "UTF-8")
+
+# extract year
+movies$Year = as.numeric(unlist(
+  lapply(movies$Title, function(x) substr(x, nchar(x)-4, nchar(x)-1))))
+
+movies = as_tibble(movies)
+print(movies)
+```
+
+Split out the `|` delimited movie genres in `Genres` and store in a new tibble data frame called `movies_and_genres`. Remove the `Genres` column in favor of a `Genre` column. The new data frame now has 1 row per movie and associated genre. All other information about a movie is simply duplicated for each of that movie's records:
+```{r}
+movies_and_genres = movies %>% 
+    mutate(Genre = strsplit(as.character(Genres), "\\|")) %>% 
+    unnest(Genre)
+movies_and_genres = select(movies_and_genres, -Genres)
+print(movies_and_genres)
+```
+
+### Users data
+
+Download and read in `users.dat`. Store the users as a tibble:
+```{r}
+users = read.csv(paste0(myurl, 'users.dat?raw=true'),
+                 sep = ':', header = FALSE)
+users = users[, -c(2,4,6,8)] # skip columns
+colnames(users) = c('UserID', 'Gender', 'Age', 'Occupation', 'Zip-code')
+users = as_tibble(users)
+print(users)
+```
+
+
+# System I - Recommendation based on genres
+
+In this section, we propose two schemes for recommending 10 movies to a user based on the knowledge of their favorite movie genre.
+
+Before building out data frames for each scheme with recommendations for each genre, we first join `movies_and_genres` to `ratings` to compile two relevant statistics for each movie:
+- `Ratings_Count`: the total number of ratings submitted by users for each movie
+- `Avg_Rating`: the average rating (on a 1-5 scale) for the movie
+
+The resulting data frame has 1 row per genre and movie for any movie that had more than 100. Because we join on `MovieID` only, we are left with a movie's statistics repeated for each of its associated genres.
+```{r}
+movie_rating_stats = sqldf('select
+		m.MovieID
+		,m.Title
+		,m.Genre
+		,m.Year
+		,count(1) Ratings_Count
+		,avg(r.Rating) Avg_Rating
+	from
+		movies_and_genres m
+	join
+		ratings r
+	on
+		r.MovieID = m.MovieID
+	group by
+		m.MovieID
+		,m.Title
+		,m.Genre
+		,m.Year
+	having count(1) > 100;'
+)
+movie_rating_stats = as_tibble(movie_rating_stats)
+print(movie_rating_stats)
+```
+
+### Recommend the top 10 most popular by Genre 
+
+This recommendation scheme recommends the top-ten most popular movies for a given genre, with popularity defined using the number of ratings for a given movie. The greater the number of ratings submitted, the greater the popularity.
+
+If two or more movies have the same number of ratings, the tie is broken using each movie's average rating with the movie of a higher average rating getting the higher final rank.
+
+It is also important to note that only movies with more than 100 total ratings are potentially served up.
+
+```{r}
+top_10_most_popular_by_genre = sqldf('
+select
+	a.Genre
+	,a.MovieID
+	,a.Title
+	,a.Year
+	,a.Ratings_Count
+	,a.Avg_Rating
+	,a.Movie_Genre_Rank
+from
+	(select
+		MovieID
+		,Title
+		,Genre
+		,Year
+		,Ratings_Count
+		,Avg_Rating
+		,row_number() over(
+			partition by Genre
+			order by 
+				Ratings_Count desc
+				,Avg_Rating desc
+		) Movie_Genre_Rank
+	from
+		movie_rating_stats
+	) a
+where movie_genre_rank <= 10
+order by
+	a.Genre
+	,a.Movie_Genre_Rank
+')
+top_10_most_popular_by_genre = as_tibble(top_10_most_popular_by_genre)
+top_10_most_popular_by_genre
+```
+
+
+
+Write `top_10_most_popular_by_genre` to disk for use in app:
+```{r}
+saveRDS(top_10_most_popular_by_genre,"MovieRecommender/top_10_most_popular_by_genre.rds")
+```
+
+**Example use:**
+
+Provide the top 10 most popular `Action` movies:
+```{r}
+filter(top_10_most_popular_by_genre, Genre == 'Action')
+```
+
+
+### Recommend the top 10 highest rated by genre
+
+This recommendation scheme recommends the top-ten movies with the highest averages ratings for a given genre. Only movies with more than 100 ratings are included.
+
+If two or more movies have the same average rating, the tie is broken using each movie's total number of ratings with the movie with more total ratings getting the higher final rank.
+
+```{r}
+top_10_highest_rated_by_genre = sqldf('
+select
+	a.Genre
+	,a.MovieID
+	,a.Title
+	,a.Year
+	,a.Ratings_Count
+	,a.Avg_Rating
+	,a.Movie_Genre_Rank
+from
+	(select
+		MovieID
+		,Title
+		,Genre
+		,Year
+		,Ratings_Count
+		,Avg_Rating
+		,row_number() over(
+			partition by Genre
+			order by 
+				Avg_Rating desc
+				,Ratings_Count desc
+		) Movie_Genre_Rank
+	from
+		movie_rating_stats
+	) a
+where movie_genre_rank <= 10
+order by
+	a.Genre
+	,a.Movie_Genre_Rank
+')
+top_10_highest_rated_by_genre = as_tibble(top_10_highest_rated_by_genre)
+top_10_highest_rated_by_genre
+```
+
+Write `top_10_highest_rated_by_genre` to disk for use in app:
+```{r}
+saveRDS(top_10_highest_rated_by_genre,"MovieRecommender/top_10_highest_rated_by_genre.rds")
+```
+
+**Example use:**
+
+Provide the top 10 highest rated `Comedy` movies:
+```{r}
+filter(top_10_highest_rated_by_genre, Genre == 'Comedy')
+```
+
+### Recommend the 10 most popular across genres
+
+This differs from the above top 10 selection in that the below looks across all movies and returns the movies with the 10 most ratings which we're deeming as the 10 most "popular". This movie list will be used to serve an edge case for System II in which a user does not submit any ratings that we'd use to make a prediction on. With that lack of user data, we'll instead just provide the 10 most popular movies across all genres with "popular" corresponding to the number of ratings.
+
+```{r}
+top_10_most_popular = sqldf('
+select
+ a.MovieID
+	,a.Title
+	,a.Ratings_Count
+	,a.Avg_Rating
+from
+	(select
+		MovieID 
+		,Title
+		,max(Ratings_Count) as Ratings_Count
+		,avg(Avg_Rating) as Avg_Rating
+	from
+		movie_rating_stats
+		
+	group by 1,2
+	order by Ratings_Count desc 
+	) a
+
+order by a.ratings_count desc 
+
+limit 10 
+')
+top_10_most_popular = as_tibble(top_10_most_popular)
+top_10_most_popular
+```
+
+Write `top_10_highest_rated` to disk for use in app:
+```{r}
+saveRDS(top_10_most_popular,"MovieRecommender/top_10_most_popular.rds")
+```
+
+# System II - Recommendation based on genres
+
+### Collaborative Reccomendation System Intro
+
+In this section, we created a collaborative recommendation system that has the goal of predicting missing ratings for a user of our Movie Recommendation application. The two collaborative recommendation algorithms we decided to use for this system were User-Based Collaborative Filtering (UBCF) and Item-Based Collaborative Filtering (IBCF).
+
+The UBCF algorithm assumes that users behave similarly to one another if they have similar preferences. The algorithm uses k-neighborhood principles in understanding how a user's _neighborhood_ behaves so that it can formulate an accurate prediction for the user of interest. This _neighborhood_ can be derived from just looking at nearest k neighbors as well as calculating a similarity threshold for the the users to be included in the neighborhood. More technical details on this concept will be provided below.
+
+The IBCF algorithm alternatively, assumes that a user will prefer an item that is similar to another item they've rated well. Like the UBCF algorithm, the IBCF algorithm also consists of calculating similarity measures to evaluate the similarity between items. More technical details on this concept will be provided below.
+
+For each of these algorithms, we'll be using root mean square error (RMSE) as our main metric to evaluate the algorithm's prediction performance. 
+
+### Getting data ready for Collaborative Reccomendation System
+
+##### Creating the rating matrix
+
+In the [top section above](#download-and-read-in-data), we've already read in the necessary raw data, which in this case, is the `ratings` dataset. 
+
+Below, we will use that `ratings` dataset to create our rating matrix. Below are the general steps that we're following to create that rating matrix.
+
+- Create a dataframe that has each the `UserID`, `MovieID`, and `Rating` as a column
+- Create a sparse matrix from this dataframe
+- Create an object of the `realRatingMatrix` type from the sparse matrix 
+
+```{r}
+
+i = paste0('u', ratings$UserID)
+j = paste0('m', ratings$MovieID)
+x = ratings$Rating
+tmp = data.frame(i, j, x, stringsAsFactors = T)
+Rmat = sparseMatrix(as.integer(tmp$i), as.integer(tmp$j), x = tmp$x)
+rownames(Rmat) = levels(tmp$i)
+colnames(Rmat) = levels(tmp$j)
+Rmat = new('realRatingMatrix', data = Rmat)
+print(dim(Rmat))
+```
+
+### Creating the recommender 
+
+As mentioned above, the two algorithms we're using for our recommender system are UBCF and IBCF. Each of these algorithms will have their prediction performances evaluated over 10 folds of data that have been split up into training and test sets.
+
+- Train/Test Split
+  - During each of the 10 folds, `evaluationScheme` will be used to split up the train and test sets at an 80:20 train:test split
+    - `evaluationScheme` arguments
+      - `given`: 3 items per user will be _given_ to the recommender algorithm in order to create the predictions.
+      - `goodRating`: we are deeming items with a user rating of >= 3 as "positives" during the evaluation process
+  
+- UBCF Algorithm
+  - During each of the 10 folds, `Recommender` is called to create the UBCF-based recommender 
+    - `Recommender` arguments
+      - Normalization (`normalize`): We're using the Z-score normalization, which not only just subtracts the row mean from the rating, but also divides by the row's standard deviation
+      - Similarity Metric (`method`): We're using the default value, `cosine`, which measures the cosine of the angle between two vectors to be able to understand how similar users are on a 0-1 scale (0: non-similar; 1: similar)
+      - Neighborhood Size (`nn`): We're using the default value, `25`, which indicates how many users should be included in the _neighborhood_ when aggregating insights to formulate a prediction
+      - Weighted Average(`weighted`): We're using using the non-weighted option, `weighted=FALSE`, which indicates that we're **not** incorporating the similarities between the neighbors and are giving equal weight to all of the users' neighbors when formulating the prediction. This was also selected because we were previously producing `NA` predictions while using the combination of cosine similarity, weighted neighbors, and normalization. With that, we wanted to remove the weighted aspect to avoid that model behavior.
+  
+- IBCF Algorithm
+  - During each of the 10 folds, `Recommender` is called to create the IBCF-based recommender 
+    - `Recommender` arguments
+      - Normalization (`normalize`): We're using the Z-score normalization, which not only just subtracts the row mean from the rating, but also divides by the row's standard deviation
+      - Similarity Metric (`method`): We're using the default value, `cosine`, which measures the cosine of the angle between two vectors to be able to understand how similar items are on a 0-1 scale (0: non-similar; 1: similar)
+      - Neighborhood Size (`k`): We're using the default value, `30`, which indicates how many items should be included in the _neighborhood_ when aggregating insights to formulate a prediction
+  
+Initialize empty lists that will store the prediction performance values as well as the script iteration times
+```{r,eval=FALSE}
+ubcf_rmse_val = rep(0,10)
+ubcf_mse_val = rep(0,10)
+ubcf_mae_val = rep(0,10)
+
+ibcf_rmse_val = rep(0,10)
+ibcf_mse_val = rep(0,10)
+ibcf_mae_val = rep(0,10)
+
+script_times = rep(0,10)
+```
+
+Over 10 folds, create two recommender systems (UBCF & IBCF) and evaluate their prediction performance
+```{r,eval=FALSE}
+for(i in 1:10){
+  print(i)
+  start_time = Sys.time()
+  es = evaluationScheme(Rmat, "split", train = 0.80, given = 3, goodRating = 3)
+  rUBCF = Recommender(getData(es, "train"), method = "UBCF",
+                                parameter = list(normalize = 'Z-score',
+                                                 weighted=FALSE))
+  rIBCF = Recommender(getData(es, "train"), method = "IBCF",
+                                parameter = list(normalize = 'Z-score'))
+  pUBCF = predict(rUBCF, getData(es, "known"), type="ratings")
+  pIBCF = predict(rIBCF, getData(es, "known"), type="ratings")
+  
+  ubcf_errs = calcPredictionAccuracy(pUBCF, getData(es, "unknown"))
+  ibcf_errs = calcPredictionAccuracy(pIBCF, getData(es, "unknown"))
+
+  ubcf_rmse_val[i] = ubcf_errs[1]
+  ubcf_mse_val[i] = ubcf_errs[2]
+  ubcf_mae_val[i] = ubcf_errs[3]
+  
+  ibcf_rmse_val[i] = ibcf_errs[1]
+  ibcf_mse_val[i] = ibcf_errs[2]
+  ibcf_mae_val[i] = ibcf_errs[3]
+  
+  end_time = Sys.time()
+  script_times[i] = as.numeric(difftime(end_time, start_time, units = "secs"))
+}
+```
+
+Save model in a `.rds` file 
+```{r,eval=FALSE}
+rUBCF_file = paste(paste("MovieRecommender/rUBCF_model",i,sep = "_"),".rds",sep = "")
+rIBCF_file = paste(paste("MovieRecommender/rIBCF_model",i,sep = "_"),".rds",sep = "")
+  
+saveRDS(rUBCF,rUBCF_file)
+saveRDS(rIBCF,rIBCF_file)
+
+# save off unique movie ids with a rating that will be passed in the server.R file
+movie_id_w_rating = sort(unique(ratings$MovieID))
+write.csv(movie_id_w_rating,'MovieRecommender/movie_ids.csv',row.names=FALSE)
+```
+
+Save off the prediction performance results and script times
+```{r,eval=FALSE}
+
+ibcf_errs = cbind(ibcf_rmse_val, ibcf_mse_val, ibcf_mae_val)
+ubcf_errs = cbind(ubcf_rmse_val, ubcf_mse_val, ubcf_mae_val)
+
+write.csv(ibcf_errs, 'ibcf_errors.csv',row.names=FALSE)
+write.csv(ubcf_errs, 'ubcf_errors.csv',row.names=FALSE)
+write.csv(script_times, 'script_times.csv',row.names=FALSE)
+```
+
+### Evaluation of Prediction Performance
+
+As mentioned above, across 10 folds, two different models (UBCF and IBCF) were trained and used to make predictions on a new user's rating. One thing to note is that even after running the algorithms, there will still be missing values which by default, are ignored by `recommenderlab`.
+
+##### Prediction Performance Values
+
+Read in the saved off error values
+```{r}
+ubcf_err_df = read.csv('ubcf_errors.csv')
+ibcf_err_df = read.csv('ibcf_errors.csv')
+rmse_cols = c("ubcf_rmse_val","ibcf_rmse_val")
+comb_err_df = cbind(1:10,ubcf_err_df, ibcf_err_df)
+comb_err_df_rmse = comb_err_df[rmse_cols]
+comb_err_df_rmse = cbind(1:10, comb_err_df_rmse)
+colnames(comb_err_df_rmse) = c("fold num","ubcf rmse","ibcf rmse")
+ubcf_rmse_mean = mean(comb_err_df_rmse$`ubcf rmse`)
+ibcf_rmse_mean = mean(comb_err_df_rmse$`ibcf rmse`)
+```
+
+Create a table with the RMSE values for the UBCF and IBCF recommender systems
+```{r}
+comb_err_df_rmse %>%
+  kbl(caption = "Prediction Performance by Fold") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+                                          Table 1: Prediction Performance by Fold
+
+From Table 1 above, we can see that the UBCF recommender system had slightly more accurate predictions than the IBCF recommender system (UBCF RMSE Avg: 1.21; IBCF RMSE Avg: 1.56). While knowing that the UBCF recommender had slightly better prediction accuracy, we decided to integrate the UBCF recommender into the application.
+
+##### Recommender System Run Time
+
+Read in the saved off script times 
+```{r}
+script_time_df = read.csv('script_times.csv')
+script_time_df = cbind(1:10, script_time_df)
+```
+
+Create a table with the run times for creating and predictng with the recommender systems
+```{r}
+script_time_minute = sum(script_time_df$x)/60
+script_time_minute_mean= mean(script_time_df$x)/60
+colnames(script_time_df) = c("fold num","time (secnods)")
+script_time_df %>%
+  kbl(caption = "Run Time by Fold") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+                                              Table 2: Run Time by Fold
+
+Using a Macbook Pro laptop with an Intel Core i7 vPRO 2.60 GHz processor and 16 GB SSD memory, we saw a total runtime, for all 10 test/train splits, of 74.5 minutes, with an average fold time of 7.4 minutes. This total runtime includes the training and prediction steps for both recommender systems. 
+

@@ -1,0 +1,191 @@
+---
+title: "(PSL) Coding Assignment 3"
+author: 'Jake Goodman (Net ID: jakeg5) & Michael McClanahan (Net ID: mjm31)'
+date: "Fall 2021"
+output:
+  html_document:
+    toc: yes
+    df_print: paged
+  html_notebook:
+    theme: readable
+    toc: yes
+    toc_float: yes
+---
+
+## Team Member Contribution
+
+Jake Goodman (Net ID: jakeg5) completed Part I of the coding assignment and organized code, files and (Part I) results for the assignment.
+
+Michael McClanahan (Net ID: mjm31) completed Part II and submitted the coding assignment on Coursera.
+
+```{r}
+set.seed(6379)
+```
+
+## Part I: Select optimal span for `loess`
+
+### Defining the functions
+
+#### `lo.lev` Function
+
+```{r}
+lo.lev = function(x1, sp){
+  # x1: n-by-1 feature vector
+  # sp: a numerical value for "span"
+  
+    ##############################################
+  # YOUR CODE: Compute the diagonal entries of the 
+  #            smoother matrix S and 
+  #            store it in a vector "lev"
+  # Tip: check how we compute the smoother matrix
+  #      for smoothing spline models
+  ##############################################
+  n = length(x1);
+  lev = rep(0, n)
+  A = matrix(0, n, n)
+  
+  for(i in 1:n){
+    y1 = rep(0,n)
+    y1[i] = 1
+    yi = loess(y1 ~ x1, control = lo_ct, span = sp)$fitted
+    A[,i]= yi
+  }
+  
+
+  
+  # get the diagonal entries of the smoother matrix, which is what we'll return
+  lev = diag((A+t(A))/2)
+  
+  return(lev)
+}
+```
+
+#### `onestep_CV` Function
+
+```{r}
+onestep_CV <- function(x1, y1, sp){
+  
+  ##############################################
+  #  YOUR CODE: 
+  #  1) Fit a loess model y1 ~ x1 with span = sp, and extract 
+  #     the corresponding residual vector
+  #  2) Call lo.lev to obtain the diagonal entries of S
+  #  3) Compute LOO-CV and GCV using formula from lecture notes
+  #    [lec_W5_NonlinearRegression.pdf] page 33. 
+  ##############################################
+  n = length(x1)
+  
+  # fit a loess model and extract the residuals
+  resid = loess(y1 ~ x1, control = lo_ct, span = sp)$residuals
+  
+  # call lo.lev and store result in s
+  s = lo.lev(x1, sp)
+
+  cv = sum(((resid)/(1-s))^2)/n
+  
+  gcv = sum((resid)^2)/(1-sum(s)/n)^2/n
+  
+  return(list(cv = cv, gcv = gcv))
+}
+```
+
+
+#### `myCV` Function
+
+```{r}
+myCV <- function(x1, y1, span){
+  # x1: feature vector of length n
+  # y1: response vector of length n
+  # span: a sequence of values for "span"
+  
+  m = length(span)
+  cv = rep(0, m)
+  gcv = rep(0, m)
+  
+  for(i in 1:m){
+    tmp = onestep_CV(x1, y1, span[i])
+    cv[i] = tmp$cv
+    gcv[i] = tmp$gcv
+  }
+  return(list(cv = cv, gcv = gcv))
+}
+```
+
+### Testing the functions
+
+Read in the data 
+```{r}
+mydata = read.csv("Coding3_Data.csv")
+```
+
+Output the dimensions of the dataset
+```{r}
+dim(mydata)
+```
+
+Plot the data present in `Coding3_Data.csv`
+```{r}
+plot(mydata$x, mydata$y,main = "Plot of Coding 3 Data", xlab="", ylab="")
+```
+
+Make `lo_ct` a global variable so it can easily be passed in the calls to `loess`
+```{r}
+lo_ct = loess.control(surface = "direct")
+```
+
+Create `span1` which will be the sequence of span values to be passed in through the various functions
+```{r}
+span1 = seq(from = 0.2, by = 0.05, length = 15 )
+```
+
+Call the `myCV` function which will compute the corresponding LOO_CV and GCV values
+```{r}
+cv.out = myCV(mydata$x, mydata$y, span1)
+```
+
+
+### Results printed out 
+
+```{r}
+myout = data.frame(CV = cv.out$cv, 
+                   GCV = cv.out$gcv, 
+                   span = span1)
+myout
+```
+
+The results from the above table appear to exactly match the output provided in the [sample code](https://liangfgithub.github.io/F21/Coding3_Part_I_SampleCode_F21.html), which lets us feel confident about the functions we defined
+
+
+```{r}
+myout$span[myout$GCV == min(myout$GCV)]
+```
+
+Similar to the sample code results, we see above that the 0.50 span value produced the lowest GCV value
+
+```{r}
+myout$span[myout$CV == min(myout$CV)]
+```
+
+Similar to the sample code results, we see above that the 0.50 span value produced the lowest LOO-CV value
+
+### Fitted curve plot
+
+```{r}
+spangcv.min = 0.5
+plot(mydata$x, mydata$y, main = "True Curve vs. Fitted Curve", xlab="", ylab="", col="gray");
+fx = 1:50/50;
+fy = sin(12*(fx+0.2))/(fx+0.2)
+lines(fx, fy, col=8, lwd=2);
+
+f = loess(y ~ x, mydata, span = spangcv.min)
+lines(fx, predict(f, data.frame(x = fx), surface = "direct"), 
+      lty=2, lwd=2, col="blue")
+legend(0.65, 2.25, legend=c("True Curve","Fitted Curve"),
+       col=c("gray","blue"), lty=1:2)
+```
+
+In the above plot, we can see the fitted curve (blue dashed line), with the optimal span value, mostly matches the true curve (solid gray line). 
+
+## Part II: Clustering time series
+
+

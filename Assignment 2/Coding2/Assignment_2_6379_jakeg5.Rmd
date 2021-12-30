@@ -1,0 +1,455 @@
+---
+title: "(PSL) Coding Assignment 2"
+author: 'Jake Goodman (Net ID: jakeg5) & Michael McClanahan (Net ID: mjm31)'
+date: "Fall 2021"
+output:
+  html_document:
+    toc: yes
+    df_print: paged
+  html_notebook:
+    theme: readable
+    toc: yes
+    toc_float: yes
+---
+
+
+## Team Member Contribution
+
+Michael McClanahan (Net ID: mjm31) completed Part I of the coding assignment and organized code, files and (Part I) results for the assignment.
+
+Jake Goodman (Net ID: jakeg5) completed Part II and submitted the coding assignment on Coursera.
+
+
+## Part I: Lasso Implementation - Solution
+
+```{r}
+set.seed(6379)
+```
+
+### Load transformed Boston Housing Data, `Coding2_myData.csv`
+
+```{r}
+myData = read.csv("Coding2_myData.csv")
+X = as.matrix(myData[, -14])
+y = myData$Y
+dim(X)
+```
+
+### `MyLasso` implementation
+
+`one_var_lasso` implementation
+
+```{r}
+one_var_lasso = function(r, x, lam) {
+    xx = sum(x^2)
+    xr = sum(r * x)
+    b = (abs(xr) - lam/2)/xx
+    b = sign(xr) * ifelse(b > 0, b, 0)
+    return(b)
+}
+```
+
+Standard deviation implementation to more closely match the definition used by `glmnet`
+```{r}
+glmnet_sd = function (z, n) {
+    sd(z) * sqrt((n-1)/n)
+}
+```
+
+`MyLasso` implementation
+```{r}
+MyLasso = function(X, y, lam.seq, maxit = 500) {
+    
+    # X: n-by-p design matrix without the intercept 
+    # y: n-by-1 response vector 
+    # lam.seq: sequence of lambda values 
+    # maxit: number of updates for each lambda 
+    # Center/Scale X
+    # Center y
+  
+    n = length(y)
+    p = dim(X)[2]
+    nlam = length(lam.seq)
+  
+    ##############################
+    # YOUR CODE: 
+    # Record the corresponding means and scales
+    # For example, 
+    # y.mean = mean(y)
+    # Xs = centered and scaled X
+    ##############################
+    
+    # Center y
+    y.mean = mean(y)
+    
+    # Center/Scale X while storing the mean and standard deviations for each predictor
+    x.column.means = colMeans(X)
+    x.column.sd_vals = apply(X, 2, glmnet_sd, n)
+    Xc = t(t(X) - x.column.means)
+    Xs = t(t(Xc) / x.column.sd_vals)
+
+    # Initialize coef vector b and residual vector r
+    b = rep(0, p)
+    r = y
+    B = matrix(nrow = nlam, ncol = p + 1)
+    
+    # Triple nested loop
+    for (m in 1:nlam) {
+        lam = 2 * n * lam.seq[m]
+        for (step in 1:maxit) {
+            for (j in 1:p) {
+                r = r + (Xs[, j] * b[j])
+                b[j] = one_var_lasso(r, Xs[, j], lam)
+                r = r - Xs[, j] * b[j]
+            }
+        }
+        B[m, ] = c(0, b)
+    }
+   
+    ##############################
+    # YOUR CODE:
+    # Scale back the coefficients;
+    # Update the intercepts stored in B[, 1]
+    ##############################
+
+    x.col_vals = x.column.means / x.column.sd_vals
+
+    # Update the intercepts stored in B[, 1]
+    B[, 1] = y.mean - B[,-1] %*% x.col_vals
+
+    # Scale back the coefficients;
+    B[, -1] = t(t(B[, -1]) / x.column.sd_vals)
+    
+    # Return the transpose of all model coefficients for each lambda, including the Intercepts
+    t(B)
+}
+```
+
+### `MyLasso` implementation test results
+
+The 80 sets of coefficients (including the intercept) are stored in a 14-by-80 matrix `myout`. 
+
+```{r}
+lam.seq = exp(seq(-1, -8, length.out = 80))
+myout = MyLasso(X, y, lam.seq, maxit = 100) 
+rownames(myout) = c("Intercept", colnames(X)) 
+dim(myout)
+```
+
+**Path plot** for the 13 non-intercept coefficients with the x-coordinate to be the lambda values in log-scale. 
+
+```{r}
+x.index = log(lam.seq)
+beta = myout[-1, ]  # beta is a 13-by-80 matrix
+matplot(x.index, t(beta),
+        xlim = c(min(x.index), max(x.index)),
+        lty = 1,
+        xlab = "Log Lambda",
+        ylab = "Coefficients",
+        type="l", 
+        lwd = 1)
+
+# add variable names to each path
+var.names = colnames(X)
+nvar = length(var.names)
+xpos = rep(min(x.index), nvar)
+ypos = beta[, ncol(beta)]
+text(xpos, ypos, var.names, cex=0.5, pos=2)
+```
+
+### Accuracy check against output from `glmnet`
+
+```{r message=FALSE, warning=FALSE}
+library(glmnet)
+lasso.fit = glmnet(X, y, alpha = 1, lambda = lam.seq)
+write.csv(as.matrix(coef(lasso.fit)), file = "Coding2_lasso_coefs.csv", 
+          row.names = FALSE)
+```
+
+The maximum difference between the two coefficient matrices is <font color="green">**less than 0.005**</font>.
+
+```{r}
+max(abs(coef(lasso.fit) - myout))
+```
+
+The plot for `MyLasso` (above) matches the plot from `glmnet` (below)
+
+```{r}
+plot(lasso.fit, xvar = "lambda")
+var.names = colnames(X)
+nvar = length(var.names)
+xpos = rep(min(x.index), nvar)
+ypos = beta[, ncol(beta)]
+text(xpos, ypos, var.names, cex=0.5, pos=2)
+
+# add variable names to each path
+var.names = colnames(X)
+nvar = length(var.names)
+xpos = rep(min(x.index), nvar)
+ypos = beta[, ncol(beta)]
+text(xpos, ypos, var.names, cex=0.5, pos=2)
+```
+
+
+## Part II: Simulation Study - Solution
+
+
+### Load transformed Boston Housing Data, `BostonData2.csv`
+
+```{r}
+data2 = read.csv("BostonData2.csv")
+data2 = data2[,-1]
+#remove the first column, which is the row id's as well as the response variable
+X = as.matrix(data2[, -1])
+Y = data2$Y
+```
+
+
+Create the logic that will be used to divide the data for the remaining model runs
+```{r}
+library("pls")
+T = 50
+n = length(Y)
+ntest = round(n * 0.25) # size of test set
+ntrain = n - ntest # size of training set
+all.test.id = matrix(0,ntest, T)
+for(t in 1:T){
+  all.test.id[,t] = sample(1:n, ntest)
+}
+```
+
+Create `MSPE` which will store the results
+```{r}
+test.id = all.test.id[,1] 
+
+MSPE = matrix(0, nrow= 50, ncol = 7)
+colnames(MSPE) = c("Full", "R_min", "R_1se", "L_min", "L_1se", "L_Refit", "PCR")
+```
+
+First figure out the best lambda sequence to use in the below subsequent simulation code
+
+```{r}
+# just using the first split to choose the lambda sequence
+test_seq_id = all.test.id[,1]
+
+cv.out = cv.glmnet(X[-test_seq_id, ], Y[-test_seq_id], alpha = 0)
+best.lam = cv.out$lambda.min
+Ytest.pred = predict(cv.out, s = best.lam, newx = X[test_seq_id, ])
+```
+
+Similarly to the sample code, we see that `best.lam` is the smallest lambda value in the default lambda sequence
+```{r}
+sum(cv.out$lambda < best.lam)
+```
+
+Initial plot to show us how we might want to adjust our lambda sequence
+```{r}
+plot(cv.out)
+```
+
+Based on the above plot and some additional testing ones, we land on the below sequence
+
+```{r}
+mylasso.lambda.seq = exp(seq(-11, -3, length.out = 100))
+cv.out = cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 0, 
+                   lambda = mylasso.lambda.seq)
+plot(cv.out)
+```
+
+With the above plot, we can see we have a U-shaped plot and thus, we'll accept this as our lambda sequence
+
+### Run through the 50 simulations on the `BostonData2` data
+
+We'll save the results off in `MSPE` and show the corresponding boxplot later on so that the boxplots from `BostonData2` and `BostonData3` can be near one other for quick comparison
+
+```{r}
+for(t in 1:T){
+  test.id = all.test.id[,t]
+  
+  # Full Model Run
+  full.model = lm(Y ~ ., data = data2[-test.id,] )
+  Ytest.pred = predict(full.model, newdata = data2[test.id,])
+  MSPE[t,1] = mean((data2$Y[test.id] - Ytest.pred)^2)
+  
+  # Ridge Model Run
+  # Sticking with the lambda sequence selection based on example provided in class
+  mylasso.lambda.seq = exp(seq(-11, -3, length.out = 100))
+  cv.out = cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 0, 
+                     lambda = mylasso.lambda.seq)
+  best.lam = cv.out$lambda.min
+  Ytest.pred = predict(cv.out, s = best.lam, newx = X[test.id, ])
+  
+  MSPE[t,2] = mean((Y[test.id] - Ytest.pred)^2)
+  
+  best.lam = cv.out$lambda.1se
+  Ytest.pred = predict(cv.out, s = best.lam, newx = X[test.id, ])
+  MSPE[t,3] = mean((Y[test.id] - Ytest.pred)^2)
+  
+  # Lasso Model Run
+  cv.out = cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 1)
+  best.lam = cv.out$lambda.min
+  Ytest.pred = predict(cv.out, s = best.lam, newx = X[test.id, ])
+  MSPE[t,4] = mean((Y[test.id] - Ytest.pred)^2)
+  
+  best.lam = cv.out$lambda.1se
+  Ytest.pred = predict(cv.out, s = best.lam, newx = X[test.id, ])
+  MSPE[t,5] = mean((Y[test.id] - Ytest.pred)^2)
+  
+  mylasso.coef = predict(cv.out, s = best.lam, type = "coefficients")
+  var.sel = row.names(mylasso.coef)[which(mylasso.coef != 0)[-1]]
+  mylasso.refit = lm(Y ~ ., data2[-test.id, c("Y", var.sel)])
+  Ytest.pred = predict(mylasso.refit, newdata = data2[test.id, ])
+  MSPE[t,6] = mean((Ytest.pred - Y[test.id])^2)
+  
+  
+  # PCR Model Run
+
+  mypcr = pcr(Y ~ ., data= data2[-test.id, ], validation="CV")
+  CVerr = RMSEP(mypcr)$val[1, , ]
+  adjCVerr = RMSEP(mypcr)$val[2, , ]
+  best.ncomp = which.min(CVerr) - 1 
+  best.ncomp
+  
+  if (best.ncomp==0) {
+    Ytest.pred = mean(data2$Y[-test.id])
+  } else {
+    Ytest.pred = predict(mypcr, data2[test.id,], ncomp=best.ncomp)
+  }
+
+  MSPE[t,7] = mean((Ytest.pred - data2$Y[test.id])^2)
+  
+}
+```
+
+
+### Load transformed Boston Housing Data, `BostonData3.csv`
+
+```{r}
+data3 = read.csv("BostonData3.csv")
+#remove the first column, which is the row id's as well as the response variable
+data3 = data3[,-1]
+
+X = as.matrix(data3[, -1])
+Y = data3$Y
+```
+
+Create `MSPE3` which will store the results for this new `BostonData3` dataset
+```{r}
+MSPE3 = matrix(0, nrow= 50, ncol = 6)
+colnames(MSPE3) = c("R_min", "R_1se", "L_min", "L_1se", "L_Refit", "PCR")
+```
+
+
+First figure out the best lambda sequence to use in the below subsequent simulation code
+
+```{r}
+# just using the first split to choose the lambda sequence
+test_seq_id = all.test.id[,1]
+
+cv.out = cv.glmnet(X[-test_seq_id, ], Y[-test_seq_id], alpha = 0)
+best.lam = cv.out$lambda.min
+Ytest.pred = predict(cv.out, s = best.lam, newx = X[test_seq_id, ])
+```
+
+Similarly to the sample code, we see that `best.lam` is the smallest lambda value in the default lambda sequence
+```{r}
+sum(cv.out$lambda < best.lam)
+```
+
+Initial plot to show us how we might want to adjust our lambda sequence
+```{r}
+plot(cv.out)
+```
+
+Based on the above plot and some additional testing ones, we land on the below sequence
+
+```{r}
+mylasso.lambda.seq = exp(seq(-4, 2, length.out = 100))
+cv.out = cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 0, 
+                   lambda = mylasso.lambda.seq)
+plot(cv.out)
+```
+
+
+With the above plot, we can see we have a U-shaped plot and thus, we'll accept this as our lambda sequence
+
+### Run through the 50 simulations on the `BostonData3` data
+
+```{r}
+for(t in 1:T){
+  test.id = all.test.id[,t]
+  
+  # Ridge Model Run
+  # Sticking with the lambda sequence selection based on example provided in class
+  mylasso.lambda.seq = exp(seq(-4, 2, length.out = 100))
+  cv.out = cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 0, 
+                     lambda = mylasso.lambda.seq)
+  best.lam = cv.out$lambda.min
+  Ytest.pred = predict(cv.out, s = best.lam, newx = X[test.id, ])
+  
+  MSPE3[t,1] = mean((Y[test.id] - Ytest.pred)^2)
+  
+  best.lam = cv.out$lambda.1se
+  Ytest.pred = predict(cv.out, s = best.lam, newx = X[test.id, ])
+  MSPE3[t,2] = mean((Y[test.id] - Ytest.pred)^2)
+  
+  # Lasso Model Run
+  cv.out = cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 1)
+  best.lam = cv.out$lambda.min
+  Ytest.pred = predict(cv.out, s = best.lam, newx = X[test.id, ])
+  MSPE3[t,3] = mean((Y[test.id] - Ytest.pred)^2)
+  
+  best.lam = cv.out$lambda.1se
+  Ytest.pred = predict(cv.out, s = best.lam, newx = X[test.id, ])
+  MSPE3[t,4] = mean((Y[test.id] - Ytest.pred)^2)
+  
+  mylasso.coef = predict(cv.out, s = best.lam, type = "coefficients")
+  var.sel = row.names(mylasso.coef)[which(mylasso.coef != 0)[-1]]
+  mylasso.refit = lm(Y ~ ., data3[-test.id, c("Y", var.sel)])
+  Ytest.pred = predict(mylasso.refit, newdata = data3[test.id, ])
+  MSPE3[t,5] = mean((Ytest.pred - Y[test.id])^2)
+  
+  
+  # PCR Model Run
+
+  mypcr = pcr(Y ~ ., data= data3[-test.id, ], validation="CV")
+  CVerr = RMSEP(mypcr)$val[1, , ]
+  adjCVerr = RMSEP(mypcr)$val[2, , ]
+  best.ncomp = which.min(CVerr) - 1 
+  best.ncomp
+  
+  if (best.ncomp==0) {
+    Ytest.pred = mean(data3$Y[-test.id])
+  } else {
+    Ytest.pred = predict(mypcr, data3[test.id,], ncomp=best.ncomp)
+  }
+
+  MSPE3[t,6] = mean((Ytest.pred - data3$Y[test.id])^2)
+}
+
+```
+
+
+
+### Boxplot for `BostonData2` Dataset
+
+```{r}
+boxplot(MSPE, main = "MSPE by Model Type (Boston 2 Dataset)",xlab = "Type of Algorithm"
+        , ylab = "MSPE", col = "darkslategray1")
+```
+
+
+### Boxplot for `BostonData3` Dataset
+
+```{r}
+boxplot(MSPE3, main = "MSPE by Model Type (Boston 3 Dataset)",xlab = "Type of Algorithm"
+        , ylab = "MSPE", col = "darkslategray1")
+```
+
+### Discussion of Boxplots
+
+In the boxplot with the `BostonData2` dataset, we see somewhat expected and unexpected results to some extent. On the unexpected side, we'd expect that that the Full Linear Regression model would've performed the worst since there are quite a few predictors involved. Additionally, we'd expect that the Lasso Refit algorithm would've performed the best. However as we can see with the boxplot, these expectations didn't completely pan out as the results were quite similar between the different algorithms. We could possibly look into performing more simulations to see if that produced more telling insights. On the expected side though, we did generally see Lasso, Ridge, and PCR produce pretty comparable results, which with the amount of predictors, and lack of noise, in this dataset, that's somewhat to be expected. As we'll see below with the `BostonData3` dataset, the differing of results became a little more noticeable  as we introduced more noise/predictors into the dataset. 
+
+In the boxplot with the `BostonData3` dataset, we see the results are a bit clearer and more of what we might expect. With its boxplot, we see the Lasso algorithms had the lowest MSPE, which we'd expect as it should be able to handle the increased noise the best. Additionally, we see that the Ridge algorithms perform similarly to each other but with a little higher MSPE values than the Lasso algorithms which we'd expect based on the advantages the Lasso algorithm offers. Lastly, we see that the PCR algorithm produced the highest MSPE values, by a lot, which we'd expect as this algorithm can't handle the increased amount of noise as well as the other algorithms can.
+
+

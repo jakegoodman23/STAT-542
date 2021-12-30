@@ -1,0 +1,24 @@
+unnamed-chunk-1	library
+unnamed-chunk-2	
+unnamed-chunk-3	as_tibble	c	colnames<-	myurl	paste0	print	read.csv
+unnamed-chunk-4	$	$<-	as_tibble	as.integer	as.numeric	c	colnames<-	data.frame	iconv	lapply	matrix	myurl	nchar	paste0	print	readLines	strsplit	substr	unlist
+unnamed-chunk-5	%>%	as.character	Genre	Genres	movies	mutate	print	select	strsplit	unnest
+unnamed-chunk-6	as_tibble	c	colnames<-	myurl	paste0	print	read.csv
+unnamed-chunk-7	as_tibble	print	sqldf
+unnamed-chunk-8	as_tibble	sqldf
+unnamed-chunk-9	saveRDS	top_10_most_popular_by_genre
+unnamed-chunk-10	==	filter	Genre	top_10_most_popular_by_genre
+unnamed-chunk-11	as_tibble	sqldf
+unnamed-chunk-12	saveRDS	top_10_highest_rated_by_genre
+unnamed-chunk-13	==	filter	Genre	top_10_highest_rated_by_genre
+unnamed-chunk-14	as_tibble	sqldf
+unnamed-chunk-15	saveRDS	top_10_most_popular
+unnamed-chunk-16	$	as.integer	colnames<-	data.frame	dim	levels	new	paste0	print	ratings	rownames<-	sparseMatrix	T
+unnamed-chunk-17	rep
+unnamed-chunk-18	[<-	as.numeric	calcPredictionAccuracy	difftime	evaluationScheme	for	getData	list	predict	print	Recommender	Rmat	Sys.time
+unnamed-chunk-19	$	i	paste	ratings	rIBCF	rUBCF	saveRDS	sort	unique	write.csv
+unnamed-chunk-20	cbind	ibcf_mae_val	ibcf_mse_val	ibcf_rmse_val	script_times	ubcf_mae_val	ubcf_mse_val	ubcf_rmse_val	write.csv
+unnamed-chunk-21	$	c	cbind	colnames<-	mean	read.csv
+unnamed-chunk-22	%>%	comb_err_df_rmse	F	kable_classic	kbl
+unnamed-chunk-23	cbind	read.csv
+unnamed-chunk-24	%>%	$	c	colnames<-	F	kable_classic	kbl	mean	sum

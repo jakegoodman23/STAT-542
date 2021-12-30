@@ -1,0 +1,436 @@
+---
+title: "Coding Assignment 1 - PSL"
+author: "Jake Goodman"
+date: ''
+output:
+  html_document: 
+    theme: readable
+    toc: yes
+urlcolor: cyan
+---
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(6379)
+```
+
+
+# Data Generation 
+
+### Generate Centers
+
+```{r}
+p = 2;      
+csize = 10;     # number of centers
+sigma = 1;      # sd for generating the centers 
+m1 = matrix(rnorm(csize*p), csize, p)*sigma + 
+  cbind( rep(1, csize), rep(0, csize))
+m0 = matrix(rnorm(csize*p), csize, p)*sigma + 
+  cbind( rep(0, csize), rep(1, csize))
+```
+
+
+### Generate Data
+
+
+```{r}
+sim_params = list(
+ csize = 10,      # number of centers
+ p = 2,           # dimension
+ s = sqrt(1/5),   # standard deviation for generating data
+ n = 100,         # training size per class
+ N = 5000,        # test size per class
+ m0 = m0,         # 10 centers for class 0
+ m1 = m1         # 10 centers for class 1
+)
+generate_sim_data = function(sim_params){
+  p = sim_params$p
+  s = sim_params$s 
+  n = sim_params$n 
+  N = sim_params$N 
+  m1 = sim_params$m1 
+  m0 = sim_params$m0
+  csize = sim_params$csize
+  
+  id1 = sample(1:csize, n, replace = TRUE);
+  id0 = sample(1:csize, n, replace = TRUE);
+  traindata = matrix(rnorm(2*n*p), 2*n, p)*s + rbind(m1[id1,], m0[id0,])
+  Ytrain = factor(c(rep(1,n), rep(0,n)))
+  shuffle_row_id = sample(1:n)
+  id1 = sample(1:csize, N, replace=TRUE);
+  id0 = sample(1:csize, N, replace=TRUE); 
+  testdata = matrix(rnorm(2*N*p), 2*N, p)*s + rbind(m1[id1,], m0[id0,])
+  Ytest = factor(c(rep(1,N), rep(0,N)))
+  
+  # Return the training/test data along with labels
+  list(
+  traindata = traindata,
+  Ytrain = Ytrain,
+  testdata = testdata,
+  Ytest = Ytest
+  )
+}
+
+```
+
+
+### Visualize the Data
+
+```{r}
+mydata = generate_sim_data(sim_params)
+traindata = mydata$train
+Ytrain = mydata$Ytrain
+testdata = mydata$testdata
+Ytest = mydata$Ytest
+n = nrow(traindata)
+
+mycol = rep("blue", n)
+mycol[Ytrain==0] = "red"
+plot(traindata[, 1], traindata[, 2], type = "n", xlab = "", ylab = "")
+points(traindata[, 1], traindata[, 2], col = mycol);
+points(m1[, 1], m1[, 2], pch = "+", cex = 2, col = "blue");    
+points(m0[, 1], m0[, 2], pch = "+", cex = 2, col = "red");   
+legend("bottomright", pch = c(1,1), col = c("blue", "red"), 
+       legend = c("class 1", "class 0")) 
+```
+
+
+# Part I
+
+### Algorithm Prep
+
+Function to calculate Euclidean Distance
+```{r}
+euclidean_distance = function(a, b){
+  sqrt(sum((a-b)^2))
+}
+```
+
+KNN function from scratch. Takes in train data, test data, factor of classifications
+and the k value
+
+In the below function, if there's multiple points with the same distance, we'll
+take the simple approach and just pick the first `k` points 
+
+Additionally, if there's a voting tie (50% probability), we'll randomly pick the
+classification. 
+```{r}
+knn_jg = function(train, test, cl, k){
+  predictions = c()
+  values = c()
+  p_mismatch = 0
+  for(i in 1:nrow(testdata)){
+    obs = testdata[i:i,]
+    dist = apply(traindata, 1, euclidean_distance, obs)
+    sort_dist = sort(dist)[1:k]
+    neighbors = which(dist %in% sort_dist)
+    
+    #Check to see if there are more neighbors than k values
+    #if so, just pick the first k neighbors
+    if(length(neighbors) != k){
+      neighbors = neighbors[1:k]
+      print("Length of Neighbors doesn't equal K")
+      
+    }
+    values[i] = mean(as.numeric(as.character(Ytrain[neighbors])))
+    
+    #if there's a voting tie, just pick randomly pick a classification
+    if (values[i] == 0.50){
+      predictions[i] = sample(0:1, 1)
+      p_mismatch = p_mismatch + 1
+    }
+    
+    else if (values[i] > 0.50){
+      
+      predictions[i] = 1
+    }
+    else{
+      predictions[i] = 0
+    }
+  
+  }
+    
+    return(predictions)
+    
+}
+```
+
+
+### Results
+
+##### knn value of 1
+
+Values from actual KNN function
+```{r}
+library('class')
+test.pred = knn(traindata, testdata, Ytrain, k = 1)
+table(Ytest, test.pred)
+```
+
+Values from hand made KNN function
+```{r}
+predjg = knn_jg(traindata, testdata, Ytrain, 1)
+table(Ytest, predjg)
+```
+
+From the above tables, we can see that the hand-made KNN function exactly matches the packaged KNN function
+
+##### knn value of 3
+
+Values from actual KNN function
+```{r}
+test.pred = knn(traindata, testdata, Ytrain, k = 3)
+table(Ytest, test.pred)
+```
+
+Values from hand made KNN function
+```{r}
+predjg = knn_jg(traindata, testdata, Ytrain, 3)
+table(Ytest, predjg)
+```
+
+From the above tables, we can see that the hand-made KNN function exactly matches the packaged KNN function
+
+##### knn value of 5
+
+Values from actual KNN function
+```{r}
+test.pred = knn(traindata, testdata, Ytrain, k = 5)
+table(Ytest, test.pred)
+```
+
+Values from hand made KNN function
+```{r}
+predjg = knn_jg(traindata, testdata, Ytrain, 5)
+table(Ytest, predjg)
+```
+
+From the above tables, we can see that the hand-made KNN function exactly matches the packaged KNN function
+
+
+# Part II
+
+### Linear Regression Model
+
+Function for Linear Regression Model
+
+```{r}
+fit_lr_model = function(sim_data, verbose=FALSE) {
+  
+  # change Y from factor to numeric
+  sim_data$Ytrain = as.numeric(sim_data$Ytrain) - 1
+  sim_data$Ytest = as.numeric(sim_data$Ytest) - 1
+  
+  # fit a linear regression model
+  model = lm(
+    sim_data$Ytrain ~ .,
+    as.data.frame(sim_data$traindata)
+  )
+  if (verbose) {
+    print(summary(model))
+  }
+  
+  decision_thresh = 0.5
+  train_pred = as.numeric(model$fitted.values > decision_thresh)
+ 
+  test_yhat = predict(
+    model,
+    newdata=as.data.frame(sim_data$testdata)
+  )
+  test_pred = as.numeric(test_yhat > decision_thresh)
+  
+  # return the mean classification errors on training/test sets
+  list(
+    train_error = mean(sim_data$Ytrain  != train_pred),
+    test_error = mean(sim_data$Ytest  != test_pred) 
+  )
+}
+```
+
+Finding train and test error for Linear Model
+```{r}
+lr_train_error = c()
+lr_test_error = c()
+
+for(i in 1:50){
+  sim_data = generate_sim_data(sim_params)
+  lr_output = fit_lr_model(sim_data)
+  lr_train_error[i] = lr_output$train_error
+  lr_test_error[i] = lr_output$test_error
+}
+```
+
+### Quadratic Regresion Model
+Function for Quadratic Regression Model
+```{r}
+fit_qr_model = function(sim_data, verbose=FALSE) {
+  
+  # change Y from factor to numeric
+  sim_data$Ytrain = as.numeric(sim_data$Ytrain) - 1
+  sim_data$Ytest = as.numeric(sim_data$Ytest) - 1
+  
+  # fit a quadratic regression model
+  model = lm(
+    sim_data$Ytrain ~ 
+      V1 + V2 + I(V1^2) + I(V2^2) + V1:V2,
+    as.data.frame(sim_data$traindata)
+  )
+  if (verbose) {
+    print(summary(model))
+  }
+  
+  decision_thresh = 0.5
+  train_pred = as.numeric(model$fitted.values > decision_thresh)
+ 
+  test_yhat = predict(
+    model,
+    newdata=as.data.frame(sim_data$testdata)
+  )
+  test_pred = as.numeric(test_yhat > decision_thresh)
+  
+  # return the mean classification errors on training/test sets
+  list(
+    train_error = mean(sim_data$Ytrain  != train_pred),
+    test_error = mean(sim_data$Ytest  != test_pred)
+  )
+}
+```
+
+
+Finding train and test error for Quadratic Model
+```{r}
+qr_train_error = c()
+qr_test_error = c()
+
+for(i in 1:50){
+  sim_data = generate_sim_data(sim_params)
+  qr_output = fit_qr_model(sim_data)
+  qr_train_error[i] = qr_output$train_error
+  qr_test_error[i] = qr_output$test_error
+}
+```
+
+### CV-KNN
+
+cvKNNAveErrorRate Function Definition
+```{r}
+cvKNNAveErrorRate = function(K, traindata, Ytrain, foldNum ){
+
+  n = nrow(traindata)
+  foldSize = floor(n/foldNum)  
+  error = 0
+  myIndex = sample(1 : n)
+  for(runId in 1:foldNum){
+    testSetIndex = ((runId-1)*foldSize + 1):(ifelse(runId == foldNum, n, runId*foldSize))
+    testSetIndex = myIndex[testSetIndex]
+    trainX = traindata[-testSetIndex, ]
+    trainY = Ytrain[-testSetIndex]
+    testX = traindata[testSetIndex, ]
+    testY = Ytrain[testSetIndex]
+    predictY = knn(trainX, testX, trainY, K)
+    error = error + sum(predictY != testY) 
+  }
+  error = error / n
+  error
+}
+
+```
+
+cvKNN Function Definition
+```{r}
+cvKNN = function(sim_data, foldNum) {
+  traindata = sim_data$traindata
+  Ytrain = sim_data$Ytrain
+  n = nrow(traindata)
+  foldSize = floor(n/foldNum)  
+  KVector = seq(1, (nrow(traindata) - foldSize), 1)
+  cvErrorRates = sapply(KVector, cvKNNAveErrorRate, traindata, Ytrain, foldNum)
+  result = list()
+  result$bestK = max(KVector[cvErrorRates == min(cvErrorRates)])
+  result$cvError = cvErrorRates[KVector == result$bestK]
+  result
+  
+}
+```
+
+Find CVV-KNN Errors
+```{r}
+opt_k = c()
+knn_train_error = c()
+knn_test_error = c()
+
+for(i in 1:50){
+  sim_data = generate_sim_data(sim_params)
+  
+  opt_k[i] = cvKNN(sim_data, 10)[[1]]
+  predictTest = knn(sim_data$traindata, sim_data$testdata, sim_data$Ytrain, opt_k[i])
+  knn_test_error[i] = mean(predictTest != sim_data$Ytest)
+  
+  predictTrain = knn(sim_data$traindata, sim_data$traindata, sim_data$Ytrain, opt_k[i])
+  knn_train_error[i] = mean(predictTrain != sim_data$Ytrain)
+  
+}
+```
+
+
+### Bayes Formula
+
+Function for Mixnorm Ratio
+
+```{r}
+mixnorm = function(x, centers0, centers1, s){
+  ## return the density ratio for a point x, where each 
+  ## density is a mixture of normal with multiple components
+  d1 = sum(exp(-apply((t(centers1) - x)^2, 2, sum) / (2 * s^2)))
+  d0 = sum(exp(-apply((t(centers0) - x)^2, 2, sum) / (2 * s^2)))
+  
+  return (d1 / d0)
+}
+```
+
+Calculating Errors for Bayes Formula
+```{r}
+bayes_train_error = c()
+bayes_test_error = c()
+
+#
+for(i in 1:50){
+  sim_data = generate_sim_data(sim_params)
+  train_prob = as.numeric(apply(sim_data$traindata, 1, mixnorm, sim_params$m0, sim_params$m1, s = sim_params$s) > 1)
+  bayes_train_error[i] = mean(train_prob != sim_data$Ytrain)
+  
+  test_prob = as.numeric(apply(sim_data$testdata, 1, mixnorm, sim_params$m0, sim_params$m1, s = sim_params$s) > 1)
+  bayes_test_error[i] = mean(test_prob != sim_data$Ytest)
+}
+```
+
+
+### Chosen K Values
+
+```{r}
+paste("Mean of chosen K values: ", mean(opt_k))
+paste("Standard Deviation of chosen K values: ", round(sd(opt_k),2))
+
+```
+
+### Error Rate Boxplot
+```{r}
+library(ggplot2)
+
+error_df = data.frame(
+  "LR_Train" = lr_train_error
+  ,"LR_Test" = lr_test_error
+  ,"QR_Train" = qr_train_error
+  ,"QR_Test" = qr_test_error
+  ,"KNN_Train" = knn_train_error
+  ,"KNN_Test" = knn_test_error
+  ,"Bayes_Train" = bayes_train_error
+  ,"Bayes_Test" = bayes_test_error
+)
+
+boxplot(error_df, main = "Boxplot of Error Rates by Classification",xlab = "Type of Classification"
+        , ylab = "Error Rate", col = c("chocolate1", "darkslategray1"))
+stripchart(error_df, add = TRUE, vertical = TRUE, jitter = 0.20, pch = 19, col = "darkorchid")
+
+```

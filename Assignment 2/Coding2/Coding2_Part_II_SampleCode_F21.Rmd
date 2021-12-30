@@ -1,0 +1,171 @@
+---
+title: "Coding Assignment 2 (Part II)"
+date: "Fall 2021"
+output:
+  html_notebook:
+    theme: readable
+    toc: TRUE
+    toc_float: TRUE
+---
+
+```{r}
+library(glmnet) 
+library(pls)
+set.seed(100) # change the seed to be the last 4-dig of your UIN
+```
+
+## Data Preparation
+
+```{r}
+myData = read.csv("~/Desktop/BostonData2.csv")
+myData = myData[, -1]
+dim(myData)
+#names(myData)
+```
+
+Some algorithms need the matrix/vector input (instead of a data frame)
+```{r}
+X = data.matrix(myData[,-1])  
+Y = myData[,1]  
+```
+
+We will repeat the following simulation 50 times. In each iteration, randomly split the data into two parts, 75\% for training and 25\% for testing. 
+
+You can write a loop with 50 iterations, and in each iteration, split the data and run the seven procedures (six procedures for `BostonData3.csv`). 
+
+Or you can save the row IDs for the 50 test datasets, then write a separate loop for each method. Using `all.test.id` (produced below), you can ensure that you use the same training/test split for each procedure.
+
+
+```{r}
+T = 50
+n = length(Y)
+ntest = round(n * 0.25)  # test set size
+ntrain = n - ntest  # training set size
+all.test.id = matrix(0, ntest, T)  # 
+for(t in 1:T){
+  all.test.id[, t] = sample(1:n, ntest)
+}
+#save(all.test.id, file="alltestID.RData")
+```
+
+
+## Seven Procedures
+
+Run the seven procedures and save the results in `MSPE`.
+
+```{r}
+test.id = all.test.id[,1] 
+
+MSPE = rep(0, 7)
+names(MSPE) = c("Full", "R_min", "R_1se", "L_min", "L_1se", "L_Refit", "PCR")
+```
+
+### Full Model
+
+```{r}
+full.model = lm(Y ~ ., data = myData[-test.id,])
+Ytest.pred = predict(full.model, newdata = myData[test.id,])
+MSPE[1] = mean((myData$Y[test.id] - Ytest.pred)^2)
+```
+
+### Ridge
+
+Ridge with lambda.min and lambda.1se
+
+```{r}
+cv.out = cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 0)
+best.lam = cv.out$lambda.min
+Ytest.pred = predict(cv.out, s = best.lam, newx = X[test.id, ])
+MSPE[2] = mean((Y[test.id] - Ytest.pred)^2)
+```
+
+The output below is zero, which means that `best.lam` is the smallest lambda value in the default lambda sequence used by `cv.glmnet`. If so, we need to include some lambda values that are smaller than `best.lam` in order to see the U shape CV plot. 
+
+```{r}
+sum(cv.out$lambda < best.lam)
+plot(cv.out)
+```
+
+Based on the CV plot, we provide a new lambda sequence as follows.
+
+```{r}
+mylasso.lambda.seq = exp(seq(-4, 1, length.out = 100))
+cv.out = cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 0, 
+                   lambda = mylasso.lambda.seq)
+plot(cv.out)
+```
+
+Based on the CV plot, we have to keep decreasing lambda values. Eventually, we use the following lambda sequence. 
+
+
+```{r}
+mylasso.lambda.seq = exp(seq(-10, -2, length.out = 100))
+cv.out = cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 0, 
+                   lambda = mylasso.lambda.seq)
+best.lam = cv.out$lambda.min
+Ytest.pred = predict(cv.out, s = best.lam, newx = X[test.id, ])
+MSPE[2] = mean((Y[test.id] - Ytest.pred)^2)
+
+best.lam = cv.out$lambda.1se
+Ytest.pred = predict(cv.out, s = best.lam, newx = X[test.id, ])
+MSPE[3] = mean((Y[test.id] - Ytest.pred)^2)
+```
+
+In your submission, **choose your lambda sequence based on one or two traing-and-test splits, and then stick to that sequence for all 50 iterations.**
+
+### Lasso
+
+Lasso with lambda.min, lambda.1se, and Refit
+
+```{r}
+cv.out = cv.glmnet(X[-test.id, ], Y[-test.id], alpha = 1)
+best.lam = cv.out$lambda.min
+Ytest.pred = predict(cv.out, s = best.lam, newx = X[test.id, ])
+MSPE[4] = mean((Y[test.id] - Ytest.pred)^2)
+
+best.lam = cv.out$lambda.1se
+Ytest.pred = predict(cv.out, s = best.lam, newx = X[test.id, ])
+MSPE[5] = mean((Y[test.id] - Ytest.pred)^2)
+
+mylasso.coef = predict(cv.out, s = best.lam, type = "coefficients")
+var.sel = row.names(mylasso.coef)[which(mylasso.coef != 0)[-1]]
+mylasso.refit = lm(Y ~ ., myData[-test.id, c("Y", var.sel)])
+Ytest.pred = predict(mylasso.refit, newdata = myData[test.id, ])
+MSPE[6] = mean((Ytest.pred - Y[test.id])^2)
+```
+
+
+The CV plot indicates that the default lambda sequence for Lasso seems fine. 
+
+
+```{r}
+plot(cv.out)
+```
+
+### PCR
+
+The principle components regression command, `pcr`, returns both the CV errors and the adjusted CV errors. For the definition of adjusted CV used in `pcr`, check Sec 2.4 of [this paper](https://mevik.net/work/publications/MSEP_estimates.pdf). 
+
+```{r}
+mypcr = pcr(Y ~ ., data= myData[-test.id, ], validation="CV")
+CVerr = RMSEP(mypcr)$val[1, , ]
+adjCVerr = RMSEP(mypcr)$val[2, , ]
+best.ncomp = which.min(CVerr) - 1 
+best.ncomp
+
+if (best.ncomp==0) {
+    Ytest.pred = mean(myData$Y[-test.id])
+  } else {
+    Ytest.pred = predict(mypcr, myData[test.id,], ncomp=best.ncomp)
+  }
+
+MSPE[7] = mean((Ytest.pred - myData$Y[test.id])^2)
+```
+
+Note that we have to subtract one from `which.min(CVerr)` since the 1st column of the CV table corresponds to the CV error with zero components (i.e., the model with just the intercept) and the k-th column of the CV table corresponds to (k-1) components. 
+
+The prediction function does not seem to work when `best.ncomp = 0`. So we have to handle that case separately.  
+
+```{r}
+MSPE
+```

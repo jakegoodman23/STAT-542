@@ -1,0 +1,169 @@
+---
+title: "Vocabulary Creation Details"
+author: 'Jake Goodman (Net ID: jakeg5) & Michael McClanahan (Net ID: mjm31)'
+date: "Fall 2021"
+output:
+  html_document:
+    toc: yes
+    df_print: paged
+  html_notebook:
+    theme: readable
+    toc: yes
+    toc_float: yes
+---
+
+Read in the initial data to make the necessary 5 splits. This is important as we'll just be using the 1st split to create our vocabulary list
+
+```{r message=FALSE, warning=FALSE}
+dir = getwd()
+data = read.table("alldata.tsv", stringsAsFactors = FALSE,
+                   header = TRUE)
+testIDs = read.csv("project3_splits.csv", header = TRUE)
+
+# write out the 5 splits from the complete dataset
+for(j in 1:5){
+  dir.create(paste("split_", j, sep=""))
+  train <- data[-testIDs[,j], c("id", "sentiment", "review") ]
+  test <- data[testIDs[,j], c("id", "review")]
+  test.y <- data[testIDs[,j], c("id", "sentiment", "score")]
+  
+  tmp_file_name <- paste("split_", j, "/", "train.tsv", sep="")
+  write.table(train, file=tmp_file_name, 
+              quote=TRUE, 
+              row.names = FALSE,
+              sep='\t')
+  tmp_file_name <- paste("split_", j, "/", "test.tsv", sep="")
+  write.table(test, file=tmp_file_name, 
+              quote=TRUE, 
+              row.names = FALSE,
+              sep='\t')
+  tmp_file_name <- paste("split_", j, "/", "test_y.tsv", sep="")
+  write.table(test.y, file=tmp_file_name, 
+              quote=TRUE, 
+              row.names = FALSE,
+              sep='\t')
+}
+```
+
+We'll use the training data from the first split to create the vocabulary list. We'll also remove any html tags from the `review` value in the training data.
+
+```{r}
+setwd(paste("split_", 1, sep=""))
+train = read.table("train.tsv",
+                   stringsAsFactors = FALSE,
+                   header = TRUE)
+train$review = gsub('<.*?>', ' ', train$review)
+```
+
+Based on guidance from the professor's post in [Campuswire](https://campuswire.com/c/G497EEF81/feed/1065), we'll be filtering out non-essential words that we don't want in our vocabulary list.
+
+```{r}
+stop_words = c("i", "me", "my", "myself", 
+               "we", "our", "ours", "ourselves", 
+               "you", "your", "yours", 
+               "their", "they", "his", "her", 
+               "she", "he", "a", "an", "and",
+               "is", "was", "are", "were", 
+               "him", "himself", "has", "have", 
+               "it", "its", "the", "us")
+```
+
+We'll construct our initial DocumentTerm matrix, which we'll further trim down in subsequent steps.
+
+To construct this DocumentTerm matrix, we'll first do some processing of the reviews, by converting the reviews to lower-case with the `preprocessor` parameter and then creating a vector of words through the `tokenizer` parameter all through the `itoken` function.
+
+We'll then create an initial vocabulary list from the above object, by excluding the previously defined stop words and applying an `ngram` boundary of `c(1L,4L))`.
+
+We'll then prune this vocabulary list by specifying the minimum number of occurrences across all documents, minimum and maximum proportion of documents containing the term. 
+
+We're then able to construct the DocumentTerm matrix with the above inputs through the `create_dtm` function.
+
+The argument values for the below functions we're adopted from the Professor's guidance on [Campuswire](https://campuswire.com/c/G497EEF81/feed/1065).
+
+
+```{r message=FALSE, warning=FALSE}
+library(text2vec)
+# create iterators that will be used to create vocabulary
+it_train = itoken(train$review,
+                  preprocessor = tolower, 
+                  tokenizer = word_tokenizer)
+
+tmp.vocab = create_vocabulary(it_train, 
+                              stopwords = stop_words, 
+                              ngram = c(1L,4L))
+tmp.vocab = prune_vocabulary(tmp.vocab, term_count_min = 10,
+                             doc_proportion_max = 0.5,
+                             doc_proportion_min = 0.001)
+
+# create document matrix from above vocabulary
+dtm_train  = create_dtm(it_train, vocab_vectorizer(tmp.vocab))
+```
+
+While still using the training data from the first split, we can trim the vocabulary list down through t-statistics. Through the use of the package `slam`, we can compute the two-sample t-statistic for each phrase and then based on its magnitude, we can trim the list down so we only have the x  number (2000 in this case) of most relevant phrases.
+
+```{r message=FALSE, warning=FALSE}
+library(slam)
+v.size = dim(dtm_train)[2]
+ytrain = train$sentiment
+
+# compute the necessary inputs to be able to compute the two-sample t-statistic
+summ = matrix(0, nrow=v.size, ncol=4)
+summ[,1] = colapply_simple_triplet_matrix(
+  as.simple_triplet_matrix(dtm_train[ytrain==1, ]), mean)
+summ[,2] = colapply_simple_triplet_matrix(
+  as.simple_triplet_matrix(dtm_train[ytrain==1, ]), var)
+summ[,3] = colapply_simple_triplet_matrix(
+  as.simple_triplet_matrix(dtm_train[ytrain==0, ]), mean)
+summ[,4] = colapply_simple_triplet_matrix(
+  as.simple_triplet_matrix(dtm_train[ytrain==0, ]), var)
+
+n1 = sum(ytrain); 
+n = length(ytrain)
+n0 = n - n1
+
+# compute the two-sample t-statistic
+myp = (summ[,1] - summ[,3])/
+  sqrt(summ[,2]/n1 + summ[,4]/n0)
+
+# slim list down to 2000 by their magnitude
+# also have context on if the word has a positive t-statistic value
+words = colnames(dtm_train)
+id = order(abs(myp), decreasing=TRUE)[1:2000]
+pos.list = words[id[myp[id]>0]]
+neg.list = words[id[myp[id]<0]]
+myvocab = words[id]
+```
+
+We have the top 2000 words from above, however for this assignment, we want to have less than 1000 words in our vocabulary list. To further trim this list down, we'll use Lasso. Through Lasso, we can identify the largest `df` that contains less than 1000 words. In our case, this yields our final vocabulary list with 997 words.
+
+```{r message=FALSE, warning=FALSE}
+library(glmnet)
+# create vectorizer from 2000 word myvocab list from above
+vectorizer = vocab_vectorizer(create_vocabulary(myvocab, 
+                                                ngram = c(1L, 2L)))
+# create new document-term matrix
+dtm_train = create_dtm(it_train, vectorizer)
+
+# set seed based on Jake Goodman's netid
+set.seed(6379)
+
+# perform lasso on newly created document-term matrix
+tmpfit = glmnet(x = dtm_train, 
+                y = train$sentiment, 
+                alpha = 1,
+                family='binomial')
+
+# grab the largest column value in which the beta-value is less than 1000
+max_df = max(which(tmpfit$df < 1000))
+
+# create final vocabulary list
+myvocab = colnames(dtm_train)[which(tmpfit$beta[, max_df] != 0)]
+
+# set working directory to location of source file 
+# write out the vocabulary list to a text file which is what will be submitted with the final code 
+setwd(dir)
+write.table(myvocab, file = "myvocab.txt", 
+            row.names = FALSE, col.names = FALSE, sep='\t')
+
+length(myvocab)
+```

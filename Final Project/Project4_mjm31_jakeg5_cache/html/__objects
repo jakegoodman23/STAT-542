@@ -1,0 +1,24 @@
+unnamed-chunk-1	
+unnamed-chunk-2	myurl
+unnamed-chunk-3	ratings
+unnamed-chunk-4	movies
+unnamed-chunk-5	movies_and_genres
+unnamed-chunk-6	users
+unnamed-chunk-7	movie_rating_stats	.Random.seed
+unnamed-chunk-8	top_10_most_popular_by_genre
+unnamed-chunk-9	
+unnamed-chunk-10	
+unnamed-chunk-11	top_10_highest_rated_by_genre
+unnamed-chunk-12	
+unnamed-chunk-13	
+unnamed-chunk-14	top_10_most_popular
+unnamed-chunk-15	
+unnamed-chunk-16	i	j	Rmat	tmp	x
+unnamed-chunk-17	
+unnamed-chunk-18	
+unnamed-chunk-19	
+unnamed-chunk-20	
+unnamed-chunk-21	comb_err_df	comb_err_df_rmse	ibcf_err_df	ibcf_rmse_mean	rmse_cols	ubcf_err_df	ubcf_rmse_mean
+unnamed-chunk-22	.Project4_mjm31_jakeg5_cache/html/unnamed-chunk-22_0939819d93a2df269e4804313c5eddde_meta
+unnamed-chunk-23	script_time_df
+unnamed-chunk-24	script_time_df	script_time_minute	script_time_minute_mean	.Project4_mjm31_jakeg5_cache/html/unnamed-chunk-24_e4d3b3adbc59323be37f96a555f335f9_meta
